@@ -111,70 +111,81 @@ function findAllDependencies(file, knownDependencies, baseDir) {
   }
 }
 
+function getNewImports(lines, knownDependencies, baseDir) {
+  return _.compact(lines.split("\n").map(function(line) {
+    var matches = line.match(/^import\s+([^\s]+)/);
+
+    if (matches) {
+      // e.g. Css.Declarations
+      var moduleName = matches[1];
+
+      // e.g. Css/Declarations
+      var dependencyLogicalName = moduleName.replace(/\./g, "/");
+
+      // e.g. ~/code/elm-css/src/Css/Declarations.elm
+      var result = path.join(baseDir, dependencyLogicalName)
+
+      return _.includes(knownDependencies, result) ? null : result;
+    } else {
+      return null;
+    }
+  }));
+}
+
+function mapImportsToPromises(newImports) {
+  return newImports.map(function(newImport) {
+    var elmFile = newImport + ".elm";
+
+    return new Promise(function(resolve, reject) {
+      return checkIsFile(newImport + ".elm").then(resolve).catch(function(firstErr) {
+        if (firstErr.code === "ENOENT") {
+          // If we couldn't find the import as a .elm file, try as .js
+          checkIsFile(newImport + ".js").then(resolve).catch(function(secondErr) {
+            if (secondErr.code === "ENOENT") {
+              // If we don't find the dependency in our filesystem, assume it's because
+              // it comes in through a third-party package rather than our sources.
+              resolve([]);
+            } else {
+              reject(secondErr);
+            }
+          })
+        } else {
+          reject(firstErr);
+        }
+      });
+    });
+  });
+}
+
+function triggerPromises(promises, reject, knownDependencies, baseDir, resolve) {
+  Promise.all(promises).then(function(nestedValidDependencies) {
+    var validDependencies = _.flatten(nestedValidDependencies);
+    var newDependencies = knownDependencies.concat(validDependencies);
+    var recursePromises = _.compact(validDependencies.map(function(dependency) {
+      return path.extname(dependency) === ".elm" ?
+        findAllDependenciesHelp(dependency, newDependencies, baseDir) : null;
+    }));
+
+    Promise.all(recursePromises).then(function(extraDependencies) {
+      resolve(_.uniq(_.flatten(newDependencies.concat(extraDependencies))));
+    }).catch(reject);
+  }).catch(reject);
+}
+
+function getFileLines(file) {
+  return fs.readFileSync(file, {encoding: "utf8"});
+}
+
 function findAllDependenciesHelp(file, knownDependencies, baseDir) {
   return new Promise(function(resolve, reject) {
-    fs.readFile(file, {encoding: "utf8"}, function(err, lines) {
-      if (err) {
-        reject(err);
-      } else {
-        // Turn e.g. ~/code/elm-css/src/Css.elm
-        // into just ~/code/elm-css/src/
-        var newImports = _.compact(lines.split("\n").map(function(line) {
-          var matches = line.match(/^import\s+([^\s]+)/);
+    var lines = getFileLines(file);
 
-          if (matches) {
-            // e.g. Css.Declarations
-            var moduleName = matches[1];
+    var newImports = getNewImports(lines, knownDependencies, baseDir);
 
-            // e.g. Css/Declarations
-            var dependencyLogicalName = moduleName.replace(/\./g, "/");
+    var promises = mapImportsToPromises(newImports);
 
-            // e.g. ~/code/elm-css/src/Css/Declarations.elm
-            var result = path.join(baseDir, dependencyLogicalName)
-
-            return _.includes(knownDependencies, result) ? null : result;
-          } else {
-            return null;
-          }
-        }));
-
-        var promises = newImports.map(function(newImport) {
-          var elmFile = newImport + ".elm";
-
-          return new Promise(function(resolve, reject) {
-            return checkIsFile(newImport + ".elm").then(resolve).catch(function(firstErr) {
-              if (firstErr.code === "ENOENT") {
-                // If we couldn't find the import as a .elm file, try as .js
-                checkIsFile(newImport + ".js").then(resolve).catch(function(secondErr) {
-                  if (secondErr.code === "ENOENT") {
-                    // If we don't find the dependency in our filesystem, assume it's because
-                    // it comes in through a third-party package rather than our sources.
-                    resolve([]);
-                  } else {
-                    reject(secondErr);
-                  }
-                })
-              } else {
-                reject(firstErr);
-              }
-            });
-          });
-        });
-
-        Promise.all(promises).then(function(nestedValidDependencies) {
-          var validDependencies = _.flatten(nestedValidDependencies);
-          var newDependencies = knownDependencies.concat(validDependencies);
-          var recursePromises = _.compact(validDependencies.map(function(dependency) {
-            return path.extname(dependency) === ".elm" ?
-              findAllDependenciesHelp(dependency, newDependencies, baseDir) : null;
-          }));
-
-          Promise.all(recursePromises).then(function(extraDependencies) {
-            resolve(_.uniq(_.flatten(newDependencies.concat(extraDependencies))));
-          }).catch(reject);
-        }).catch(reject);
-      }
-    });
+    triggerPromises(promises, reject, knownDependencies, baseDir, resolve);
+    
   });
 }
 
