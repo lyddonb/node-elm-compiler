@@ -5,7 +5,7 @@ var _ = require("lodash");
 var compilerBinaryName = "elm-make";
 var fs = require("fs");
 var path = require("path");
-var temp = require("temp");
+var temp = require("temp").track();
 var firstline = require("firstline");
 
 var defaultOptions     = {
@@ -72,7 +72,7 @@ function compile(sources, options) {
 function getBaseDir(file) {
   return firstline(file).then(function(line) {
     return new Promise(function(resolve, reject) {
-      var matches = line.match(/^module\s+([^\s]+)/);
+      var matches = line.match(/^(?:port\s+)?module\s+([^\s]+)/);
 
       if (matches) {
         // e.g. Css.Declarations
@@ -88,6 +88,15 @@ function getBaseDir(file) {
         var trimmedBackedOut = backedOut.replace(/^../, "");
 
         return resolve(path.normalize(path.dirname(file) + trimmedBackedOut));
+      } else if (!line.match(/^(?:port\s+)?module\s/)) {
+        // Technically you're allowed to omit the module declaration for
+        // beginner applications where it'd just be `module Main exposing (..)`
+        // If there is no module declaration, we'll assume we have one of these,
+        // and succeed with the file's directory itself.
+        //
+        // See https://github.com/rtfeldman/node-elm-compiler/pull/36
+
+        return resolve(path.dirname(file));
       }
 
       return reject(file + " is not a syntactically valid Elm module. Try running elm-make on it manually to figure out what the problem is.");
@@ -210,6 +219,9 @@ function compileToString(sources, options){
 
       var compiler = compile(sources, options);
 
+      compiler.stdout.setEncoding("utf8");
+      compiler.stderr.setEncoding("utf8");
+
       var output = '';
       compiler.stdout.on('data', function(chunk) {
         output += chunk;
@@ -220,14 +232,12 @@ function compileToString(sources, options){
 
       compiler.on("close", function(exitCode) {
           if (exitCode !== 0) {
-            temp.cleanupSync();
             return reject(new Error('Compilation failed\n' + output));
           } else if (options.verbose) {
             console.log(output);
           }
 
-          fs.readFile(info.path, function(err, data){
-            temp.cleanupSync();
+          fs.readFile(info.path, {encoding: "utf8"}, function(err, data){
             return err ? reject(err) : resolve(data);
           });
         });

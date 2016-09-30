@@ -14,6 +14,22 @@ $ node compileHelloWorld.js
 
 # Releases
 
+## 4.1.5
+
+Clean up temporary directories more safely.
+
+## 4.1.4
+
+`findAllDependencies` now supports `port module` files.
+
+## 4.1.3
+
+Use utf-8 encoding for `compileToString`
+
+## 4.1.2
+
+Support checking dependencies for modules with no module declaration.
+
 ## 4.1.1
 
 Fix bug in dependency searches beginning with a non-root `Main` module.

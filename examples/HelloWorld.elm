@@ -1,5 +1,8 @@
-import Html exposing
+module Main exposing (..)
 
-main : Html
+import Html exposing (Html, text)
+
+
+main : Html msg
 main =
-  Html.text "Hello, World!"
+    Html.text "Hello, World!"
